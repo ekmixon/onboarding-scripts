@@ -35,11 +35,11 @@ def add_aws_account_to_d9(name, arn, extid, readonly):
 
     print('\nAdding target AWS account to Dome9...')
     resp = http_request('post', url, payload, False)
-    
+
     if resp.status_code == 201:
         resp = json.loads(resp.content)
         return resp['id']
-    
+
     elif resp.status_code == 400:
         print('AWS Cloud Account already added or bad request. Please remove the account from Dome9 before using this script.')
         print(payload)
@@ -55,11 +55,11 @@ def get_aws_accounts_from_d9():
 
     print('\nGetting list of AWS accounts already onboarded to Dome9...')
     resp = http_request('get', url, payload, False)
-    
+
     if resp.status_code == 200:
         resp = json.loads(resp.content)
         return resp
-    
+
     else:
         print('Error when attempting to get list of AWS accounts.')
         print(resp)
@@ -71,11 +71,11 @@ def create_ou_in_d9(name, parent_id):
     payload = {"name":name,"parentId":parent_id}
 
     resp = http_request('post', url, payload, False)
-    
+
     if resp.status_code == 200:
         resp = json.loads(resp.content)
         return resp['item']['id']
-    
+
     else:
         print('Error when attempting to create OU in Dome9.')
         print(resp)
@@ -91,11 +91,11 @@ def attach_account_to_ou_in_d9(cloud_account_id, ou_id):
 
     print('\nAttaching Cloud Account to OU...')
     resp = http_request('post', url, payload, False)
-    
+
     if resp.status_code == 200:
         resp = json.loads(resp.content)
         return resp
-    
+
     else:
         print('Error when attempting to attach AWS account to Dome9 OU.')
         print(resp)
@@ -109,10 +109,10 @@ def get_aws_org_parent(orgclient, id):
         )['Parents'] 
 
         if parentresp[0]['Type'] == 'ORGANIZATIONAL_UNIT':
-            ouresp = orgclient.describe_organizational_unit(
+            return orgclient.describe_organizational_unit(
                 OrganizationalUnitId=parentresp[0]['Id']
             )['OrganizationalUnit']
-            return ouresp
+
         elif parentresp[0]['Type'] == 'ROOT':
             return False
     except ClientError as e:
@@ -125,17 +125,16 @@ def get_aws_org_ou_list(orgclient, aws_account):
         ou_list.append(current_parent['Name'])
     else:
         return ou_list
-        
+
     while current_parent:
         current_parent = get_aws_org_parent(orgclient, current_parent['Id'])
         if current_parent:
             ou_list.insert(0, current_parent['Name'])
 
-    if len(ou_list) > 5:
-        print(f'ERROR: OUs have exceeded the depth limit of 5: \n{ou_list}')
-        os._exit(1)
-    else: 
+    if len(ou_list) <= 5:
         return ou_list
+    print(f'ERROR: OUs have exceeded the depth limit of 5: \n{ou_list}')
+    os._exit(1)
 
 def get_cft_stack(cfclient, name):
     try: 
@@ -159,18 +158,15 @@ def check_cft_stack_exists(cfclient, name):
 
 def create_cft_stack(cfclient, name, cfturl, extid):
     try:
-        resp = cfclient.create_stack(
+        return cfclient.create_stack(
             StackName=name,
             TemplateURL=cfturl,
             Parameters=[
-                {
-                    'ParameterKey': 'Externalid',
-                    'ParameterValue': extid
-                    },
+                {'ParameterKey': 'Externalid', 'ParameterValue': extid},
             ],
             Capabilities=['CAPABILITY_IAM'],
-            )
-        return resp
+        )
+
     except ClientError as e:
         print(f'Unexpected error: {e}')
         return False
@@ -183,18 +179,18 @@ def process_organizatonal_units(aws_ou_list):
     # Get root OU list from Dome9
     url = "https://api.dome9.com/v2/organizationalunit"
     payload = {}
- 
+
     resp = http_request('get', url, payload, True)
 
     if resp.status_code == 200:
         print('\nComparing Organizational Units...')
         root = json.loads(resp.content)
-    
+
     else:
         print('Error when attempting to get OUs from Dome9.')
         print(resp)
         return False   
-    
+
     current_d9_parent_ou = root[0]['children'] # Get OU children of root
 
     for depth, item in enumerate(aws_ou_list):
@@ -220,11 +216,14 @@ def process_organizatonal_units(aws_ou_list):
             break
         else:            
             current_d9_parent_ou = current_d9_parent_ou[idx]['children']
-    
+
     return last_ou
 
 def mode_crossaccount_onboard(stsclient):
-    assume_role_arn = 'arn:aws:iam::' + OPTIONS.account_number + ':role/' + OPTIONS.role_name # Build role ARN of target account being onboarded to assume into
+    assume_role_arn = (
+        f'arn:aws:iam::{OPTIONS.account_number}:role/{OPTIONS.role_name}'
+    )
+
     print(f'\nAssuming Role into target account using ARN: {assume_role_arn}') 
 
     stsresp = stsclient.assume_role(
@@ -280,7 +279,7 @@ def mode_organizations_onboard(orgclient, stsclient, cfclient):
 
     unprotected_account_list = [d for d in org_accounts_pruned if (d['id']) not in d9_aws_accounts_pruned] # create list of AWS accounts not found in Dome9
 
-    if len(unprotected_account_list) == 0:
+    if not unprotected_account_list:
         print("No unprotected accounts found.")
         os._exit(1)
     else:
@@ -331,7 +330,7 @@ def mode_organizations_onboard(orgclient, stsclient, cfclient):
             count_failures += 1
         elif d9_ou_id and d9_cloud_account_id and ou_attached:
             count_successes += 1
-        
+
     _print_stats(len(unprotected_account_list), count_successes, count_failures)
     
 def process_account(cfclient, aws_account_name):
@@ -392,7 +391,7 @@ def http_request(request_type, url, payload, silent):
         else:
             print('Request type not supported.')
             return False
-        
+
         resp.raise_for_status()
     except HTTPError as http_err:
         print(f'HTTP error occurred: {http_err}') 
@@ -401,7 +400,7 @@ def http_request(request_type, url, payload, silent):
     else:
         if not silent:
             print('Success!')
-    
+
     return resp
 
 def main(argv=None):
@@ -421,7 +420,7 @@ def main(argv=None):
     parser._action_groups.pop()
     required = parser.add_argument_group('required arguments')
     optional = parser.add_argument_group('optional arguments')
-    
+
     optional.add_argument('--region', dest='region_name',default='us-east-1',help='AWS Region Name for Dome9 CFT deployment. Default: us-east-1')
     optional.add_argument('--d9mode', dest='d9mode', default='readonly', help='readonly/readwrite: Dome9 mode to onboard AWS account as. Default: readonly')
 
@@ -450,10 +449,10 @@ def main(argv=None):
         required.add_argument('--role', dest='role_name', help='AWS cross-account access role for Assume-Role. (e.g. MyRoleName)', required=True)
         optional.add_argument('--ignore-ou', dest='ignore_ou', default=False, help='Ignore AWS Organizations OUs and place accounts in root.', action='store_true')
         optional.add_argument('--ignore-failures', dest='ignore_failures', default=False, help='Ignore onboarding failures and continue.', action='store_true')
-    elif mode == '-h' or mode == '--help':
+    elif mode in ['-h', '--help']:
         parser.print_help()
         os._exit(1)
-        
+
     OPTIONS = parser.parse_args(argv)
 
     # load config file
@@ -464,14 +463,17 @@ def main(argv=None):
     if not os.environ.get('d9id') or not os.environ.get('d9id'):
         print('\nERROR: Dome9 API credentials not found in environment variables.')
         os._exit(1)
-    
+
     # Get AWS creds for the client. Region is needed for CFT deployment location.
     print('\nCreating AWS service clients...\n')
     cfclient = boto3.client('cloudformation', region_name=OPTIONS.region_name)
     try: # Check for successful authentication
-        cfclient.list_stacks()      
+        cfclient.list_stacks()
     except ClientError as e:
-        print(f'ERROR: Unable to authenticate to AWS using environment variables or IAM role.')
+        print(
+            'ERROR: Unable to authenticate to AWS using environment variables or IAM role.'
+        )
+
         os._exit(1)
 
     if mode == 'crossaccount':
